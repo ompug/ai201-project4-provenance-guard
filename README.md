@@ -1,322 +1,150 @@
-# ai201-project4-provenance-guard
+# Provenance Guard
 
-Provenance Guard is a Flask API for AI content attribution. It accepts creator submissions, combines multiple detection signals into a confidence score, returns a plain-language transparency label, supports appeals, rate-limits submissions, and records a structured audit trail.
+**AI201 Project 4** — a Flask API that classifies creator-submitted content using multiple detection signals, returns confidence-aware transparency labels, and supports appeals with a structured audit trail.
 
-## Features
+**Repository:** [github.com/ompug/ai201-project4-provenance-guard](https://github.com/ompug/ai201-project4-provenance-guard)
 
-- `POST /submit` for text attribution
-- three-signal ensemble detection
-- confidence scoring with uncertainty handling
-- plain-language transparency labels
-- `POST /appeal` workflow with audit history
-- rate limiting with `Flask-Limiter`
-- structured SQLite audit log with `GET /log`
-- verified human provenance certificate
-- analytics dashboard
-- metadata-based multi-modal submission path
-
-## Setup
-
-1. Create and activate a virtual environment:
+## Quick start
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-```
-
-2. Install dependencies:
-
-```bash
 pip install -r requirements.txt
-```
-
-3. Create `.env` from `.env.example` and add your real Groq key:
-
-```bash
-cp .env.example .env
-```
-
-4. Run the app:
-
-```bash
+cp .env.example .env   # then set GROQ_API_KEY in .env
 python -m flask --app app run
 ```
 
-The API will be available at `http://127.0.0.1:5000`.
+The API listens at `http://127.0.0.1:5000`. Run `bash scripts/demo.sh` for example requests.
 
-## Architecture Overview
+## API endpoints
 
-A submission enters `POST /submit`, where the API validates the payload and assigns a `content_id`. The raw text then goes through three signals: a Groq-based holistic classifier, a stylometric heuristic scorer, and a lexical formality scorer. Their outputs are combined into a single confidence score, translated into an attribution category plus a reader-facing label, stored in SQLite, logged in the audit trail, and returned as structured JSON.
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/submit` | Text attribution (`text`, `creator_id`) |
+| `POST` | `/submit/metadata` | Image description or structured metadata |
+| `POST` | `/appeal` | Contest a classification (`content_id`, `creator_reasoning`) |
+| `POST` | `/certificate/verify` | Earn verified-human badge |
+| `GET` | `/log` | Structured audit log (JSON) |
+| `GET` | `/content/<id>` | Content detail including verified badge |
+| `GET` | `/dashboard` | Analytics dashboard (HTML) |
+| `GET` | `/health` | Health check |
 
-An appeal enters `POST /appeal` with a `content_id` and the creator's reasoning. The content status is updated to `under_review`, the appeal is written as a structured audit event alongside the original classification, and the response confirms that review is pending.
+## Architecture
 
-## Detection Signals
+A submission flows through validation, three detection signals, ensemble scoring, label generation, SQLite persistence, and audit logging before the JSON response is returned.
 
-### 1. Groq LLM signal
+1. **Submit** — `POST /submit` assigns a `content_id` and runs the text through all signals.
+2. **Score** — weighted ensemble produces `confidence` and `attribution` (`likely_ai`, `likely_human`, or `uncertain`).
+3. **Label** — plain-language transparency text is chosen from three variants.
+4. **Log** — timestamp, signal scores, and verdict are written to the audit log.
+5. **Appeal** — `POST /appeal` sets status to `under_review` and appends an appeal entry linked to the original decision.
 
-- Measures: holistic style, generic phrasing, overly balanced "AI voice"
-- Why I chose it: it captures semantic and stylistic clues that simple heuristics cannot
-- What it misses: formal human essays, non-native but polished writing, carefully edited drafts
-- Output: `ai_likelihood` from `0.0` to `1.0` plus a short rationale
+See [`planning.md`](planning.md) for the full spec, thresholds, and architecture diagram.
 
-### 2. Stylometric signal
+## Detection signals
 
-- Measures: sentence length variance, type-token ratio, punctuation density
-- Why I chose it: AI text is often structurally more uniform than human writing
-- What it misses: poetry, very short submissions, dialogue-heavy writing, bullet lists
-- Output: normalized `ai_likelihood` plus underlying metrics
+| Signal | What it measures | Blind spot |
+|--------|------------------|------------|
+| **Groq LLM** (`llama-3.3-70b-versatile`) | Holistic style, generic phrasing, polished "AI voice" | Formal human essays, heavily edited drafts |
+| **Stylometric** | Sentence-length variance, type-token ratio, punctuation density | Poetry, dialogue, very short text |
+| **Lexical formality** | Stock transition phrases (`furthermore`, `it is important to note`, etc.) | Academic and technical human writing |
 
-### 3. Lexical formality signal
+Each signal returns `ai_likelihood` in `[0, 1]` (higher = more likely AI). Individual scores appear in the API response and audit log.
 
-- Measures: density of stock transition phrases and formulaic formal connectors
-- Why I chose it: many AI-generated paragraphs overuse scaffolding phrases like `furthermore` and `it is important to note`
-- What it misses: academic human prose, business communication, technical reports
-- Output: normalized `ai_likelihood` plus phrase-hit metrics
+## Confidence scoring
 
-## Confidence Scoring
-
-Each signal returns `ai_likelihood` in `[0, 1]`, where higher means more likely AI-generated.
-
-### Ensemble formula
-
-```text
-combined = (groq * 0.45) + (stylometric * 0.30) + (lexical * 0.25)
-```
-
-### Uncertainty handling
-
-If the three signals disagree strongly, the score is pulled toward `0.50` instead of letting one signal dominate:
+**Ensemble:**
 
 ```text
-if max(signals) - min(signals) > 0.35:
-    combined = (combined * 0.7) + (0.50 * 0.3)
+combined = (groq × 0.45) + (stylometric × 0.30) + (lexical × 0.25)
 ```
 
-This reflects the project design choice that false positives are worse than false negatives.
+**Disagreement dampening** (false-positive safeguard): if signal spread exceeds `0.35`, the score is pulled toward `0.50`.
 
-### Thresholds
+**Thresholds:**
 
-- `confidence >= 0.72` -> `likely_ai`
-- `confidence <= 0.38` -> `likely_human`
-- otherwise -> `uncertain`
+| Range | Attribution |
+|-------|-------------|
+| `≥ 0.72` | `likely_ai` |
+| `≤ 0.38` | `likely_human` |
+| otherwise | `uncertain` |
 
-### Validation examples
+### Example submissions
 
-I tested the scoring with clearly different writing styles and inspected the individual signal scores in the API response.
-
-Low-score human example:
+**High-confidence human** (`0.324`):
 
 ```text
-"ugh. long day. burned toast, missed class, spilled coffee on my notes, then laughed about it because what else was i gonna do?"
+ugh. long day. burned toast, missed class, spilled coffee on my notes,
+then laughed about it because what else was i gonna do?
 ```
 
-- Result: `likely_human`
-- Confidence: `0.324`
-
-Lower-confidence / uncertain example:
+**Lower-confidence / uncertain** (`0.423`):
 
 ```text
-"still thinking about that awful toast from this morning. somehow the jam made it worse."
+still thinking about that awful toast from this morning.
+somehow the jam made it worse.
 ```
 
-- Result: `uncertain`
-- Confidence: `0.423`
+> **Note:** Without a valid `GROQ_API_KEY`, the Groq signal falls back to `0.5`, which compresses the score range. Replace `your_key_here` in `.env` with your real key for full LLM-backed detection.
 
-Higher-score AI-leaning formal example tested during development:
+## Transparency labels
+
+| Category | Label text |
+|----------|------------|
+| High-confidence AI | Likely created with AI assistance. Multiple checks agree, and we are confident in this assessment. |
+| Uncertain | Origin unclear. We could not confidently tell whether a person or AI wrote this. The creator can request a human review. |
+| High-confidence human | Likely written by a person. Multiple checks agree, and we are confident in this assessment. |
+
+Verified creators receive a `Verified human creator —` prefix on the label.
+
+## Appeals, audit log, and rate limiting
+
+**Appeals** — creators send `content_id` and `creator_reasoning`; status becomes `under_review` and a linked appeal row appears in `GET /log`.
+
+**Audit log** — structured JSON via `GET /log`; each entry includes timestamp, attribution, confidence, individual signal scores, and status. Appeals include `appeal_reasoning`.
+
+**Rate limiting** — `10 per minute; 100 per day` per IP on submit routes. Rationale: allows revision bursts for normal writers while blocking scripted flooding.
 
 ```text
-"Furthermore, it is important to note that the system should support responsible deployment. Furthermore, it is important to note that stakeholders should support responsible deployment. Furthermore, it is important to note that various sectors should support responsible deployment. Furthermore, it is important to note that modern society should support responsible deployment."
+200 × 10, then 429
 ```
 
-- Result during fallback-only testing: `uncertain`
-- Confidence: `0.668`
-- Note: with no `GROQ_API_KEY` configured, the Groq signal intentionally falls back to `0.5`, which compresses the top end of the score range. Adding a real key allows the LLM signal to distinguish this case more strongly.
+## Stretch features
 
-## Transparency Labels
+- **Ensemble detection** — three signals with documented weighting and conflict resolution
+- **Provenance certificate** — `POST /certificate/verify` grants a verified-human badge when a sample scores `likely_human` at `≤ 0.38`
+- **Analytics dashboard** — `GET /dashboard` shows verdict ratios, appeal rate, and average confidence
+- **Multi-modal** — `POST /submit/metadata` for image descriptions and structured metadata
 
-The system has three written label variants:
+## Known limitations
 
-- High-confidence AI: `"Likely created with AI assistance. Multiple checks agree, and we are confident in this assessment."`
-- Uncertain: `"Origin unclear. We could not confidently tell whether a person or AI wrote this. The creator can request a human review."`
-- High-confidence human: `"Likely written by a person. Multiple checks agree, and we are confident in this assessment."`
+- **Formal academic prose** may score AI-leaning because polished transitions trigger the lexical and LLM signals.
+- **Repetitive poetry** can look AI-like to stylometrics due to intentionally low variance.
+- **Very short submissions** lack enough structure for reliable stylometric scoring and often remain `uncertain`.
 
-For verified creators, the label is prefixed with:
+## Spec reflection
+
+The planning spec helped most with uncertainty design — defining what `uncertain` means before coding made disagreement dampening straightforward. The main divergence was expanding to three signals (instead of two) so the ensemble stretch feature shares the same pipeline as the required multi-signal detection.
+
+## AI usage
+
+1. **Flask scaffold and storage** — AI drafted route layout and SQLite helpers; I separated audit logging from content persistence and standardized `content_id` handling.
+2. **Scoring heuristics** — AI suggested metric groupings; I overrode thresholds, weighting, and dampening to match the written spec.
+3. **Production layer** — AI accelerated appeals, rate limiting, certificate, and dashboard wiring; I aligned behavior to the plan (`under_review` state, verified label prefix, rubric-visible response fields).
+
+## Portfolio walkthrough
+
+Record a short (~2 min) video showing: submit → label and signals → audit log → appeal → rate limit `429` → certificate verification → dashboard.
+
+## Project structure
 
 ```text
-Verified human creator -
+app.py              Flask routes and limiter
+planning.md         Pre-implementation spec
+signals/            Groq, stylometric, and lexical detectors
+scoring.py          Ensemble combination
+labels.py           Transparency label mapping
+storage.py          SQLite content store and audit log
+templates/          Analytics dashboard
+scripts/demo.sh     curl demos for graders
 ```
-
-Example verified label:
-
-```text
-Verified human creator - Origin unclear. We could not confidently tell whether a person or AI wrote this. The creator can request a human review.
-```
-
-## Appeals Workflow
-
-Creators can contest a decision by sending:
-
-```json
-{
-  "content_id": "existing-content-id",
-  "creator_reasoning": "I wrote this myself from personal experience."
-}
-```
-
-When an appeal is received, the API:
-
-1. looks up the original content
-2. updates `status` to `under_review`
-3. records a structured appeal event in the audit log
-4. returns a confirmation response
-
-The audit log shows both the original classification and the later appeal for the same `content_id`.
-
-## Audit Log
-
-The audit log is stored in SQLite and exposed with `GET /log`. Each classification row includes:
-
-- timestamp
-- content ID
-- creator ID
-- attribution
-- confidence
-- label
-- individual signal scores
-- status
-
-Appeal rows additionally include `appeal_reasoning` and `event_type: appeal`.
-
-Example fields visible in the log:
-
-```json
-{
-  "content_id": "dd0e74b9-3fa1-4221-9d67-0fcfa7247710",
-  "event_type": "appeal",
-  "attribution": "uncertain",
-  "confidence": 0.412,
-  "status": "under_review",
-  "appeal_reasoning": "I wrote this myself from personal experience, and the style is informal because it came from my notes app."
-}
-```
-
-## Rate Limiting
-
-The submission endpoints use:
-
-```text
-10 per minute; 100 per day
-```
-
-Reasoning:
-
-- a normal writer may submit several drafts in a short burst
-- `10 per minute` still allows revision-heavy testing
-- `100 per day` is generous for normal usage but discourages mass probing or flood attempts
-
-Example rate-limit behavior from testing:
-
-```text
-200
-200
-200
-200
-200
-200
-200
-200
-200
-200
-429
-429
-```
-
-## Stretch Features
-
-### Ensemble detection
-
-The API exposes all three signal scores in both the response body and the audit log:
-
-- `groq_score`
-- `stylometric_score`
-- `lexical_score`
-
-Conflicts are handled through documented weighting and disagreement dampening.
-
-### Provenance certificate
-
-`POST /certificate/verify` lets a creator submit a short human writing sample. If the sample is classified as `likely_human` at or below `0.38`, the creator earns a verified-human badge. Future submissions from that creator return `verified: true` and a label prefixed with `Verified human creator -`.
-
-### Analytics dashboard
-
-`GET /dashboard` renders a simple HTML dashboard with at least three required metrics:
-
-- detection pattern across `likely_ai`, `likely_human`, and `uncertain`
-- appeal rate
-- average confidence score
-
-It also shows total submissions and verified-creator count.
-
-### Multi-modal support
-
-`POST /submit/metadata` accepts:
-
-- `content_type: "image_description"`
-- `content_type: "structured_metadata"`
-
-The pipeline converts the metadata into analyzable descriptive text and then runs the same three-signal attribution flow.
-
-## Known Limitations
-
-- Formal academic prose may be misclassified as AI-leaning because both the lexical formality signal and the LLM signal can treat polished transitions and balanced structure as suspicious.
-- Repetitive poetry or chant-like writing may be pushed toward AI by the stylometric heuristics because low variance and repeated vocabulary are intentional artistic choices.
-- Very short submissions provide weak stylometric evidence, so those results lean more heavily on the other signals and often stay `uncertain`.
-
-## Spec Reflection
-
-The spec helped most with confidence design because it forced me to decide what `uncertain` should mean before I wrote code. That made the disagreement-dampening rule straightforward to implement instead of retrofitting uncertainty after the fact.
-
-The main implementation divergence was that I expanded from the required two signals to a three-signal ensemble so I could satisfy the ensemble stretch feature cleanly inside the same pipeline. That changed the response shape slightly, but it made the README and audit log more informative.
-
-## AI Usage
-
-### Instance 1: initial Flask and storage scaffold
-
-- I asked the AI to help structure the Flask app, submission route, and SQLite storage layer based on the planning document.
-- The output gave me a useful first pass for route organization and data flow.
-- I revised it by separating logging and content persistence, adding explicit `content_id` handling, and making the audit entries structured enough for rubric visibility.
-
-### Instance 2: scoring and heuristics
-
-- I used AI assistance to speed up the first draft of the stylometric and lexical scoring helpers.
-- The output suggested reasonable metric groupings but did not reflect my exact thresholds or false-positive concerns.
-- I overrode the raw scoring behavior by adding weighted combination rules, disagreement dampening toward `0.50`, and threshold-based label mapping from the written spec.
-
-### Instance 3: production features and stretch routes
-
-- I used AI to accelerate the implementation of rate limiting, appeals, certificate verification, and dashboard wiring.
-- The output provided a starting structure for endpoint signatures and HTML rendering.
-- I revised the behavior to match the plan exactly, especially the `under_review` appeal state, the verified-creator label prefix, and the response fields exposed for grading.
-
-## Demo Commands
-
-See `scripts/demo.sh` for example `curl` commands that exercise:
-
-- `POST /submit`
-- `POST /appeal`
-- `GET /log`
-- `POST /certificate/verify`
-- `POST /submit/metadata`
-- `GET /dashboard`
-
-## Portfolio Walkthrough
-
-For the final submission video, show:
-
-1. a normal text submission
-2. the returned label and signal scores
-3. the audit log with multiple entries
-4. an appeal changing status to `under_review`
-5. rate limiting returning `429`
-6. certificate verification and a verified label
-7. the analytics dashboard
