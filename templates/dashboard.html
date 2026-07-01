@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Provenance Guard Dashboard</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+      background: #f7f7fb;
+      color: #1f2937;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      padding: 1rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    }
+    .label {
+      font-size: 0.9rem;
+      color: #6b7280;
+      margin-bottom: 0.35rem;
+    }
+    .value {
+      font-size: 1.8rem;
+      font-weight: 700;
+    }
+    ul {
+      padding-left: 1.2rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Provenance Guard Dashboard</h1>
+  <p>Simple analytics view for submission patterns, appeals, and confidence trends.</p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Total submissions</div>
+      <div class="value">{{ metrics.total_submissions }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Appeal rate</div>
+      <div class="value">{{ (metrics.appeal_rate * 100) | round(1) }}%</div>
+    </div>
+    <div class="card">
+      <div class="label">Average confidence</div>
+      <div class="value">{{ metrics.average_confidence }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Verified creators</div>
+      <div class="value">{{ metrics.verified_creators }}</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 1rem;">
+    <div class="label">Detection pattern</div>
+    <ul>
+      <li>Likely AI: {{ metrics.verdict_counts.likely_ai }}</li>
+      <li>Likely human: {{ metrics.verdict_counts.likely_human }}</li>
+      <li>Uncertain: {{ metrics.verdict_counts.uncertain }}</li>
+      <li>Appeals filed: {{ metrics.appeal_count }}</li>
+    </ul>
+  </div>
+</body>
+</html>

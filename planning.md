@@ -323,6 +323,38 @@ The second content type will be metadata-driven submissions such as image descri
   - verify appeal updates `status` to `under_review`
   - verify rate limit produces `429`
 
+## Stretch Feature Update
+
+This section records the concrete implementation choices before bonus-feature coding begins.
+
+### Ensemble detection update
+
+The API response and audit log will expose all three signal scores directly:
+
+- `groq_score`
+- `stylometric_score`
+- `lexical_score`
+
+The ensemble remains weighted `0.45 / 0.30 / 0.25`, with disagreement dampening toward `0.50` when score spread exceeds `0.35`.
+
+### Provenance certificate update
+
+The verification step will ask the creator for a short personal writing sample through `POST /certificate/verify`. If that sample scores `likely_human` at `0.38` or below, the creator will be marked verified and future content responses will include `verified: true` and a label prefixed with `Verified human creator -`.
+
+### Analytics dashboard update
+
+The dashboard will compute and display:
+
+- verdict counts and ratios across `likely_ai`, `likely_human`, and `uncertain`
+- appeal rate
+- average confidence score
+- total submissions
+- verified creator count
+
+### Multi-modal update
+
+The additional content type will be descriptive metadata submitted through `POST /submit/metadata`. Inputs may be image descriptions or structured metadata flattened into text. The Groq prompt will still score AI-likelihood, while stylometric and lexical heuristics will run on the descriptive text body; if the text is very short, the system will allow the heuristics to contribute less certainty.
+
 ## Implementation Notes
 
 - Use Flask for the API.
